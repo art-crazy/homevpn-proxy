@@ -1,45 +1,90 @@
-using Wpf.Ui.Appearance;
-using Wpf.Ui.Markup;
-
 namespace HomeVpnProxyTray;
 
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
-        using var singleInstance = new SingleInstanceGuard();
+        if (args.Contains("--window"))
+        {
+            RunWindowProcess();
+        }
+        else
+        {
+            RunSupervisorProcess();
+        }
+    }
+
+    /// <summary>
+    /// Always-on tray icon process. Deliberately never touches any
+    /// System.Windows.* (WPF) type - the JIT resolves/loads an assembly
+    /// the first time a method that references it actually runs, so
+    /// keeping this whole call path WPF-free means PresentationCore/
+    /// PresentationFramework etc. never get loaded here at all. This is
+    /// most of why the idle footprint is small: no WPF, no WPF-UI
+    /// resource dictionaries, just WinForms for the NotifyIcon.
+    /// </summary>
+    private static void RunSupervisorProcess()
+    {
+        using var singleInstance = new SingleInstanceGuard("Supervisor");
         if (!singleInstance.IsFirstInstance)
         {
-            // Another instance already owns the tray icon - ask it to
-            // show its window and quit instead of spawning a second one.
             singleInstance.NotifyExistingInstance();
             return;
         }
-
-        // The tray icon (System.Windows.Forms.NotifyIcon has no WPF
-        // equivalent) drives a WinForms message loop, but the popup and
-        // settings windows are WPF/WPF-UI for the Fluent look. A live
-        // System.Windows.Application is needed for WPF resources/dispatcher
-        // even though WinForms owns Application.Run() below - the two
-        // share the same UI thread without conflict.
-        var appTheme = ApplicationThemeManager.GetSystemTheme() == SystemTheme.Dark
-            ? ApplicationTheme.Dark
-            : ApplicationTheme.Light;
-
-        var wpfApp = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
-        wpfApp.Resources.MergedDictionaries.Add(new ThemesDictionary { Theme = appTheme });
-        wpfApp.Resources.MergedDictionaries.Add(new ControlsDictionary());
-        ApplicationThemeManager.Apply(appTheme);
 
         System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2);
         System.Windows.Forms.Application.EnableVisualStyles();
 
         var context = new TrayApplicationContext();
-        singleInstance.ShowRequested += (_, _) =>
-            wpfApp.Dispatcher.Invoke(context.ShowMainWindow);
+        singleInstance.ShowRequested += (_, _) => context.RequestWindow();
         singleInstance.StartListening();
 
         System.Windows.Forms.Application.Run(context);
+    }
+
+    /// <summary>
+    /// Launched on demand (see TrayApplicationContext.RequestWindow) with
+    /// "--window" whenever the user actually wants to see the settings
+    /// window. This is the only place that bootstraps WPF/WPF-UI, and the
+    /// whole process exits the moment the window closes - all of that
+    /// memory goes back to the OS instead of sitting around in an
+    /// always-running tray process.
+    /// </summary>
+    private static void RunWindowProcess()
+    {
+        using var singleInstance = new SingleInstanceGuard("Window");
+        if (!singleInstance.IsFirstInstance)
+        {
+            singleInstance.NotifyExistingInstance();
+            return;
+        }
+
+        RunWindowProcessInner(singleInstance);
+    }
+
+    // Split into its own method so RunWindowProcess() above never forces
+    // the JIT to resolve WPF types on the "another window is already
+    // open" fast-exit path.
+    private static void RunWindowProcessInner(SingleInstanceGuard singleInstance)
+    {
+        var appTheme = Wpf.Ui.Appearance.ApplicationThemeManager.GetSystemTheme() == Wpf.Ui.Appearance.SystemTheme.Dark
+            ? Wpf.Ui.Appearance.ApplicationTheme.Dark
+            : Wpf.Ui.Appearance.ApplicationTheme.Light;
+
+        var wpfApp = new System.Windows.Application();
+        wpfApp.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ThemesDictionary { Theme = appTheme });
+        wpfApp.Resources.MergedDictionaries.Add(new Wpf.Ui.Markup.ControlsDictionary());
+        Wpf.Ui.Appearance.ApplicationThemeManager.Apply(appTheme);
+
+        var window = new MainWindow();
+        singleInstance.ShowRequested += (_, _) => wpfApp.Dispatcher.Invoke(() =>
+        {
+            window.WindowState = System.Windows.WindowState.Normal;
+            window.Activate();
+        });
+        singleInstance.StartListening();
+
+        wpfApp.Run(window);
     }
 }

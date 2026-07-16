@@ -1,16 +1,25 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace HomeVpnProxyTray;
 
+/// <summary>
+/// Pure WinForms - deliberately never references anything from
+/// System.Windows.* (WPF). The settings window runs as a separate process
+/// (see Program.RunWindowProcess) started on demand and left to manage
+/// itself; this class only launches it and refreshes the tray icon once
+/// it exits, in case something was toggled while it was open.
+/// </summary>
 internal sealed class TrayApplicationContext : ApplicationContext
 {
     private readonly NotifyIcon _notifyIcon;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly ToolStripMenuItem _toggleMenuItem;
+    private readonly SynchronizationContext? _uiContext;
 
-    private MainWindow? _mainWindow;
     private HealthSnapshot _lastSnapshot = new(false, false, Array.Empty<string>(), null);
     private bool _checking;
 
@@ -20,7 +29,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     public TrayApplicationContext()
     {
         _toggleMenuItem = new ToolStripMenuItem("Включить", null, (_, _) => Toggle());
-        var openItem = new ToolStripMenuItem("Открыть", null, (_, _) => ShowMainWindow());
+        var openItem = new ToolStripMenuItem("Открыть", null, (_, _) => RequestWindow());
         var exitItem = new ToolStripMenuItem("Выход", null, (_, _) => ExitApp());
 
         var menu = new ContextMenuStrip();
@@ -39,6 +48,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
         _notifyIcon.MouseUp += OnTrayMouseUp;
 
+        // Creating the NotifyIcon above gives this thread a
+        // WindowsFormsSynchronizationContext - captured so the
+        // Process.Exited handler (which fires on a threadpool thread) can
+        // safely marshal back before touching the tray icon.
+        _uiContext = SynchronizationContext.Current;
+
         _timer = new System.Windows.Forms.Timer { Interval = Constants.HealthCheckIntervalMs };
         _timer.Tick += async (_, _) => await RefreshAsync();
         _timer.Start();
@@ -49,27 +64,20 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private void OnTrayMouseUp(object? sender, System.Windows.Forms.MouseEventArgs e)
     {
         if (e.Button != MouseButtons.Left) return;
-        ShowMainWindow();
+        RequestWindow();
     }
 
-    public void ShowMainWindow()
+    public void RequestWindow()
     {
-        if (_mainWindow is { IsVisible: true })
-        {
-            _mainWindow.Activate();
-            return;
-        }
+        var exePath = Environment.ProcessPath;
+        if (exePath is null) return;
 
-        _mainWindow = new MainWindow();
-        _mainWindow.ToggleRequested += (_, _) =>
-        {
-            Toggle();
-            _mainWindow?.RefreshToggles();
-        };
-        _mainWindow.RefreshRequested += async (_, _) => await RefreshAsync();
-        _mainWindow.RenderHealth(_lastSnapshot, ProxyToggle.IsEnabled());
-        _mainWindow.Show();
-        _mainWindow.Activate();
+        var psi = new ProcessStartInfo(exePath, "--window") { UseShellExecute = false };
+        var process = Process.Start(psi);
+        if (process is null) return;
+
+        process.EnableRaisingEvents = true;
+        process.Exited += (_, _) => _uiContext?.Post(_ => _ = RefreshAsync(), null);
     }
 
     private void Toggle()
@@ -98,11 +106,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 : new HealthSnapshot(false, SafeCheckPointConnected(), Array.Empty<string>(), null);
 
             UpdateTrayVisuals(enabled);
-
-            if (_mainWindow is { IsVisible: true })
-            {
-                _mainWindow.RenderHealth(_lastSnapshot, enabled);
-            }
         }
         finally
         {
@@ -176,7 +179,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _notifyIcon.Dispose();
         _timer.Stop();
         _timer.Dispose();
-        _mainWindow?.Close();
         System.Windows.Forms.Application.Exit();
     }
 

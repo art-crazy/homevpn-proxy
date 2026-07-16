@@ -5,12 +5,16 @@ using Wpf.Ui.Controls;
 
 namespace HomeVpnProxyTray;
 
+/// <summary>
+/// Runs as its own short-lived process (see Program.RunWindowProcess) -
+/// self-sufficient, doesn't need anything from the tray supervisor. Reads
+/// live proxy/PAC state directly and applies toggles directly; the
+/// supervisor picks up any change on its own next health-check tick (or
+/// immediately once this process exits).
+/// </summary>
 public partial class MainWindow : FluentWindow
 {
     private bool _suppressEvents;
-
-    public event EventHandler? ToggleRequested;
-    public event EventHandler? RefreshRequested;
 
     public MainWindow()
     {
@@ -23,9 +27,10 @@ public partial class MainWindow : FluentWindow
         PacUrlValueBox.Text = Constants.PacUrl;
 
         RefreshToggles();
+        _ = RefreshHealthAsync();
     }
 
-    public void RefreshToggles()
+    private void RefreshToggles()
     {
         _suppressEvents = true;
         try
@@ -44,7 +49,29 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    public void RenderHealth(HealthSnapshot snapshot, bool enabled)
+    private async Task RefreshHealthAsync()
+    {
+        var enabled = ProxyToggle.IsEnabled();
+        var snapshot = enabled
+            ? await HealthChecker.RunAsync()
+            : new HealthSnapshot(false, SafeCheckPointConnected(), Array.Empty<string>(), null);
+
+        RenderHealth(snapshot, enabled);
+    }
+
+    private static bool SafeCheckPointConnected()
+    {
+        try
+        {
+            return HealthChecker.CheckPointConnected();
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void RenderHealth(HealthSnapshot snapshot, bool enabled)
     {
         ProxyStatusText.Text = enabled
             ? (snapshot.ProxyReachable ? "Прокси на роутере: доступен" : "Прокси на роутере: НЕ отвечает")
@@ -68,7 +95,18 @@ public partial class MainWindow : FluentWindow
     private void OnMasterToggleChanged(object sender, RoutedEventArgs e)
     {
         if (_suppressEvents) return;
-        ToggleRequested?.Invoke(this, EventArgs.Empty);
+
+        if (ProxyToggle.IsEnabled())
+        {
+            ProxyToggle.Disable();
+        }
+        else
+        {
+            ProxyToggle.Enable();
+        }
+
+        RefreshToggles();
+        _ = RefreshHealthAsync();
     }
 
     private void OnAutoStartToggleChanged(object sender, RoutedEventArgs e)
@@ -77,5 +115,5 @@ public partial class MainWindow : FluentWindow
         AutoStartManager.SetEnabled(AutoStartToggle.IsChecked == true);
     }
 
-    private void OnRefreshClick(object sender, RoutedEventArgs e) => RefreshRequested?.Invoke(this, EventArgs.Empty);
+    private void OnRefreshClick(object sender, RoutedEventArgs e) => _ = RefreshHealthAsync();
 }

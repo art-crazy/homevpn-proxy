@@ -12,12 +12,24 @@
     <RootNamespace>HomeVpnProxyTray</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
 
-    <!-- Single-file, self-contained publish so it runs on a machine with
-         no .NET runtime installed separately. -->
-    <SelfContained>true</SelfContained>
+    <!-- Framework-dependent (needs the .NET 8 Desktop Runtime installed)
+         instead of self-contained - the always-running tray process is
+         pure WinForms and never loads WPF at all (see Program.cs), so the
+         main memory cost is the WPF/WPF-UI payload used only by the
+         separate, short-lived window process; framework-dependent lets
+         that share already-resident framework pages with any other .NET
+         app on the machine instead of mapping its own private copy. -->
+    <SelfContained>false</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+
+    <!-- Workstation, non-concurrent GC: this is an idle-most-of-the-time
+         tray app, not a throughput workload - Server GC (the .NET default
+         for some app models) allocates a heap per core and generally uses
+         more memory than this app ever needs. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+
     <!-- WPF's text layout engine needs real culture/ICU data - invariant
          globalization mode crashes it (CultureNotFoundException creating
          "en") the first time any text gets measured. -->
