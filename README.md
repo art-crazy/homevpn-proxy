@@ -115,12 +115,25 @@ way.
 
 ### Browser
 
-Don't set a system-wide/browser-wide proxy (that would tunnel all
-browsing, including corporate web apps, through the home VPN). Instead
-use a proxy extension (e.g. FoxyProxy, SwitchyOmega) configured to use
-`192.168.2.250:2080` only for `claude.ai`, `*.anthropic.com`, `claude.com`
-(and any other domains you add to ZeroBlock's list, e.g. `chatgpt.com` if
-you extend it later).
+Uses a PAC (Proxy Auto-Config) script instead of a blanket system-wide
+proxy, so only `claude.ai`/`anthropic.com`/`claude.com` traffic goes
+through the LAN proxy - everything else (including corporate web apps)
+goes direct.
+
+The PAC file (`windows/homevpn-proxy.pac`) is hosted on the router itself
+at `http://192.168.2.1/homevpn-proxy.pac` (served by uhttpd, already
+deployed there) so it's reachable regardless of Check Point state and can
+be updated in one place.
+
+```powershell
+windows/set-pac.ps1     # points Windows' automatic proxy config at it
+windows/unset-pac.ps1   # rollback
+```
+
+Chrome/Edge pick this up via Windows' system proxy settings
+automatically. If you add more domains later (e.g. `chatgpt.com`), edit
+`windows/homevpn-proxy.pac` and re-upload it to `/www/homevpn-proxy.pac`
+on the router - no client-side changes needed.
 
 ## Extending the domain list
 
