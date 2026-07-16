@@ -17,7 +17,9 @@ USE_PROCD=1
 NS="homevpn"
 VETH_HOST="veth-hv0"
 VETH_NS="veth-hv1"
+VETH_NS_MAC="02:00:00:00:02:50"
 NS_IP="192.168.2.250/24"
+NS_IP_ONLY="192.168.2.250"
 NS_GW="192.168.2.1"
 BRIDGE="br-lan"
 CONF="/etc/homevpn-proxy/config.json"
@@ -25,14 +27,49 @@ WORKDIR="/tmp/homevpn-proxy"
 SINGBOX="/usr/bin/sing-box"
 RESOLV_DIR="/etc/netns/${NS}"
 
+teardown_netns() {
+	# Kill anything still running inside the namespace first - deleting a
+	# namespace that still has a process attached (e.g. sing-box hasn't
+	# fully exited yet when procd calls this) silently fails, leaving a
+	# stale namespace that the next setup_netns() then can't recreate.
+	for pid in $(ip netns pids "$NS" 2>/dev/null); do
+		kill "$pid" 2>/dev/null
+	done
+	for i in 1 2 3 4 5; do
+		[ -z "$(ip netns pids "$NS" 2>/dev/null)" ] && break
+		sleep 1
+	done
+
+	ip link show "$VETH_HOST" >/dev/null 2>&1 && ip link delete "$VETH_HOST" 2>/dev/null
+
+	for i in 1 2 3; do
+		ip netns list | awk '{print $1}' | grep -qx "$NS" || return 0
+		ip netns delete "$NS" 2>/dev/null
+		sleep 1
+	done
+	return 0
+}
+
 setup_netns() {
-	ip netns list | grep -qx "$NS" && return 0
+	# Always rebuild from scratch. ZeroBlock restarts (e.g. after a LuCI
+	# save&apply) briefly touch br-lan/nftables and can knock our veth off
+	# the bridge; reusing a possibly-stale namespace silently leaves the
+	# proxy unreachable, so a clean teardown+recreate on every start is
+	# cheap insurance.
+	teardown_netns
 
 	mkdir -p "$RESOLV_DIR"
 	[ -f "$RESOLV_DIR/resolv.conf" ] || echo "nameserver $NS_GW" > "$RESOLV_DIR/resolv.conf"
 
 	ip netns add "$NS"
 	ip link add "$VETH_HOST" type veth peer name "$VETH_NS"
+	# Fixed MAC on the netns side: veth pairs otherwise get a random MAC on
+	# every recreation, which leaves stale ARP entries for 192.168.2.250
+	# pointing at a dead MAC on the router (and on any other LAN device
+	# that talked to the proxy before) - "REACHABLE" flips to "FAILED" and
+	# everything times out until something happens to flush it. A fixed
+	# MAC means 192.168.2.250 always resolves the same way, permanently.
+	ip link set "$VETH_NS" address "$VETH_NS_MAC"
 	ip link set "$VETH_HOST" master "$BRIDGE"
 	ip link set "$VETH_HOST" up
 	ip link set "$VETH_NS" netns "$NS"
@@ -41,12 +78,11 @@ setup_netns() {
 	ip netns exec "$NS" ip addr add "$NS_IP" dev "$VETH_NS"
 	ip netns exec "$NS" ip link set "$VETH_NS" up
 	ip netns exec "$NS" ip route add default via "$NS_GW"
-}
 
-teardown_netns() {
-	ip link show "$VETH_HOST" >/dev/null 2>&1 && ip link delete "$VETH_HOST" 2>/dev/null
-	ip netns list | grep -qx "$NS" && ip netns delete "$NS" 2>/dev/null
-	return 0
+	# Belt and suspenders: also clear out any pre-existing stale ARP entry
+	# for our address on the router itself (e.g. left over from before this
+	# fix was deployed).
+	ip neigh flush to "$NS_IP_ONLY" 2>/dev/null
 }
 
 start_service() {
@@ -60,7 +96,11 @@ start_service() {
 
 	procd_open_instance "homevpn-proxy"
 	procd_set_param command ip netns exec "$NS" "$SINGBOX" run -c "$CONF" -D "$WORKDIR"
-	procd_set_param respawn
+	# threshold=3600s (run this long to be considered stable), timeout=5s
+	# between respawns, retry=0 (unlimited) - a stock `respawn` gives up
+	# permanently after ~5 crashes in a short window, which is exactly
+	# what a brief ZeroBlock-restart hiccup triggers.
+	procd_set_param respawn 3600 5 0
 	procd_set_param stdout 1
 	procd_set_param stderr 1
 	procd_close_instance
@@ -72,4 +112,7 @@ stop_service() {
 
 service_triggers() {
 	procd_add_reload_trigger "homevpn-proxy"
+	# Rebuild our veth/netns whenever ZeroBlock's config is applied, since
+	# that's what disrupts our bridge attachment in the first place.
+	procd_add_reload_trigger "zeroblock"
 }
