@@ -97,11 +97,37 @@ domain list (read live from the router's PAC), and the exact values being
 set (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY, AutoConfigURL), with a click to
 enable/disable and an autostart option.
 
+**Install:**
+
 ```powershell
 cd windows/HomeVpnProxyTray
 dotnet publish -c Release
-# run bin/Release/net8.0-windows/win-x64/publish/HomeVpnProxyTray.exe
+
+# Copy to a permanent location - not the build folder, which gets wiped
+# on every rebuild. The "autostart with Windows" toggle in the app
+# records whatever path it was launched from, so this has to happen
+# before turning that on.
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\HomeVpnProxyTray" | Out-Null
+Copy-Item "bin\Release\net8.0-windows\win-x64\publish\HomeVpnProxyTray.exe" "$env:LOCALAPPDATA\HomeVpnProxyTray\" -Force
+
+# Optional: Start Menu shortcut
+$s = (New-Object -ComObject WScript.Shell).CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\HomeVPN Proxy.lnk")
+$s.TargetPath = "$env:LOCALAPPDATA\HomeVpnProxyTray\HomeVpnProxyTray.exe"
+$s.Save()
 ```
+
+Then run `%LOCALAPPDATA%\HomeVpnProxyTray\HomeVpnProxyTray.exe` (or the
+Start Menu shortcut) and turn on "Автозапуск с Windows" inside the app.
+
+**Update:** re-run the publish + copy steps above after pulling changes -
+no uninstall step needed, it just overwrites the exe (close the running
+instance first via its tray menu, Windows won't let you overwrite a
+running exe).
+
+**Uninstall:** quit via the tray menu, delete
+`%LOCALAPPDATA%\HomeVpnProxyTray\`, and toggle off autostart *before*
+deleting (or just delete the `HomeVpnProxyTray` value under
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` directly).
 
 The sections below describe what it's actually doing under the hood /
 how to do it manually via the standalone scripts instead.
