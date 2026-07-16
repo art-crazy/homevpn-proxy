@@ -23,7 +23,7 @@ ssh root@192.168.2.1 'sh /tmp/homevpn-proxy-install/install.sh'
 
 `windows/HomeVpnProxyTray/` — приложение в трее, включает/выключает всё одной кнопкой (переменные окружения + PAC), показывает статус: доступен ли прокси, подключён ли Check Point, какие домены сейчас туннелируются.
 
-Готовый exe: [Releases](https://github.com/art-crazy/homevpn-proxy/releases/latest) → положить в `%LOCALAPPDATA%\HomeVpnProxyTray\HomeVpnProxyTray.exe` → запустить → включить тумблер «Автозапуск с Windows».
+Готовый exe: [Releases](https://github.com/art-crazy/homevpn-proxy/releases/latest) → положить в `%LOCALAPPDATA%\HomeVpnProxyTray\HomeVpnProxyTray.exe` → запустить → включить тумблер «Автозапуск с Windows». Нужен установленный [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0) (не self-contained — так меньше ест памяти в простое).
 
 Сборка из исходников:
 
