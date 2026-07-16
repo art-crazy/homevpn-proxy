@@ -1,0 +1,75 @@
+#!/bin/sh /etc/rc.common
+# homevpn-proxy - always-on-VPN SOCKS5+HTTP proxy for LAN clients.
+#
+# Creates a network namespace with a veth pair bridged into br-lan, so the
+# proxy process looks like an ordinary LAN device to the router. This means
+# its traffic automatically rides the existing ZeroBlock domain-based
+# routing (mangle/tproxy rules matching iifname br-lan) - whatever VPN
+# ZeroBlock currently has active is what this proxy uses too. No VPN
+# credentials are stored or duplicated here.
+#
+# Reachable at socks5://192.168.2.250:2080 and http://192.168.2.250:2080
+
+START=99
+STOP=10
+USE_PROCD=1
+
+NS="homevpn"
+VETH_HOST="veth-hv0"
+VETH_NS="veth-hv1"
+NS_IP="192.168.2.250/24"
+NS_GW="192.168.2.1"
+BRIDGE="br-lan"
+CONF="/etc/homevpn-proxy/config.json"
+WORKDIR="/tmp/homevpn-proxy"
+SINGBOX="/usr/bin/sing-box"
+RESOLV_DIR="/etc/netns/${NS}"
+
+setup_netns() {
+	ip netns list | grep -qx "$NS" && return 0
+
+	mkdir -p "$RESOLV_DIR"
+	[ -f "$RESOLV_DIR/resolv.conf" ] || echo "nameserver $NS_GW" > "$RESOLV_DIR/resolv.conf"
+
+	ip netns add "$NS"
+	ip link add "$VETH_HOST" type veth peer name "$VETH_NS"
+	ip link set "$VETH_HOST" master "$BRIDGE"
+	ip link set "$VETH_HOST" up
+	ip link set "$VETH_NS" netns "$NS"
+
+	ip netns exec "$NS" ip link set lo up
+	ip netns exec "$NS" ip addr add "$NS_IP" dev "$VETH_NS"
+	ip netns exec "$NS" ip link set "$VETH_NS" up
+	ip netns exec "$NS" ip route add default via "$NS_GW"
+}
+
+teardown_netns() {
+	ip link show "$VETH_HOST" >/dev/null 2>&1 && ip link delete "$VETH_HOST" 2>/dev/null
+	ip netns list | grep -qx "$NS" && ip netns delete "$NS" 2>/dev/null
+	return 0
+}
+
+start_service() {
+	[ -x "$SINGBOX" ] || {
+		logger -t homevpn-proxy "sing-box binary not found at $SINGBOX"
+		return 1
+	}
+
+	mkdir -p "$WORKDIR"
+	setup_netns
+
+	procd_open_instance "homevpn-proxy"
+	procd_set_param command ip netns exec "$NS" "$SINGBOX" run -c "$CONF" -D "$WORKDIR"
+	procd_set_param respawn
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+stop_service() {
+	teardown_netns
+}
+
+service_triggers() {
+	procd_add_reload_trigger "homevpn-proxy"
+}
