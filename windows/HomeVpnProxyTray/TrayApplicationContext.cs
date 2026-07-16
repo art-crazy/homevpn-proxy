@@ -52,7 +52,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         ShowMainWindow();
     }
 
-    private void ShowMainWindow()
+    public void ShowMainWindow()
     {
         if (_mainWindow is { IsVisible: true })
         {
