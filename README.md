@@ -97,7 +97,11 @@ domain list (read live from the router's PAC), and the exact values being
 set (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY, AutoConfigURL), with a click to
 enable/disable and an autostart option.
 
-**Install:**
+Prebuilt exe (no rebuild needed): [download from Releases](https://github.com/art-crazy/homevpn-proxy/releases/latest)
+- just save it to `%LOCALAPPDATA%\HomeVpnProxyTray\HomeVpnProxyTray.exe`
+  and run it (see "Install" below for the shortcut step).
+
+**Install (from source):**
 
 ```powershell
 cd windows/HomeVpnProxyTray
