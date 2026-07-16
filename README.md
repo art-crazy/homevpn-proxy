@@ -88,6 +88,24 @@ Nothing else on the router is touched. `kmod-veth` is left installed
 
 ## Windows setup
 
+### Tray app (recommended)
+
+`windows/HomeVpnProxyTray/` is a small WPF-UI (Fluent) tray app that does
+everything below (env vars + PAC) with a toggle and shows live status -
+proxy reachability, Check Point connection state, the actual tunneled
+domain list (read live from the router's PAC), and the exact values being
+set (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY, AutoConfigURL), with a click to
+enable/disable and an autostart option.
+
+```powershell
+cd windows/HomeVpnProxyTray
+dotnet publish -c Release
+# run bin/Release/net8.0-windows/win-x64/publish/HomeVpnProxyTray.exe
+```
+
+The sections below describe what it's actually doing under the hood /
+how to do it manually via the standalone scripts instead.
+
 ### Claude Code / Codex CLI / other CLI tools
 
 Point them at the proxy via the standard env vars. Two ways:
