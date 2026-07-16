@@ -1,200 +1,112 @@
 # homevpn-proxy
 
-Forces ChatGPT / Claude / Claude Code / Codex CLI / browser traffic to go
-through the home router's VPN (managed by ZeroBlock/sing-box on OpenWrt),
-even while the corporate Check Point Endpoint VPN is connected on the PC -
-without touching Check Point settings, and without depending on which VPN
-ZeroBlock currently has active.
+Прокси на домашнем роутере, который заставляет трафик ChatGPT / Claude / Claude Code / Codex CLI / браузера идти через домашний VPN (ZeroBlock/sing-box на OpenWrt) — даже когда на компьютере включён корпоративный Check Point VPN. Без изменения настроек Check Point и без привязки к тому, какой именно VPN сейчас активен в ZeroBlock.
 
-## The problem
+## Проблема
 
-The router (OpenWrt 24.10.4 + ZeroBlock 0.6.2 + sing-box) already does
-domain-based VPN routing: it transparently intercepts LAN traffic
-(TPROXY), sniffs the TLS SNI, and if the domain is in ZeroBlock's list
-(`claude.ai`, `anthropic.com`, etc. under the `opera` profile), routes it
-through the VPN. This works great for normal LAN traffic.
+Роутер (OpenWrt 24.10.4 + ZeroBlock 0.6.2 + sing-box) уже умеет маршрутизировать трафик по доменам: прозрачно перехватывает трафик из локальной сети (TPROXY), смотрит SNI в TLS-соединении и, если домен есть в списке ZeroBlock (профиль `opera`), заворачивает его через VPN. Для обычных устройств в сети это работает отлично.
 
-The catch: when the corporate Check Point VPN is active on the PC, it
-intercepts traffic to certain destination IPs (e.g. Cloudflare IPs used by
-chatgpt.com/claude.ai) **at the Windows driver level, before it ever
-reaches the router**. The router's filter never sees this traffic, so it
-can't route it anywhere.
+Проблема в другом: когда на компьютере включён корпоративный Check Point VPN, он перехватывает трафик к определённым адресам (например, к Cloudflare, через который работают chatgpt.com/claude.ai) **на уровне драйвера Windows — ещё до того, как трафик доходит до роутера**. Фильтр роутера просто не видит этот трафик и не может его никуда завернуть.
 
-The one thing Check Point does *not* intercept: connections to addresses
-inside the home LAN (192.168.2.0/24) - confirmed via `tracert 192.168.2.1`
-staying at 1 hop even with the corporate VPN connected.
+Единственное, что Check Point не трогает — соединения внутри домашней сети (192.168.2.0/24): проверено через `tracert 192.168.2.1`, который остаётся в 1 хопе даже при включённом корпоративном VPN.
 
-## The fix
+## Решение
 
-Instead of fighting Check Point, route around it: point apps at a proxy
-living on the LAN. Check Point lets that connection through (it's local),
-the router receives it and handles VPN routing itself, same as it always
-has.
+Не бороться с Check Point напрямую, а обойти его: направить приложения на прокси внутри локальной сети. Такое соединение Check Point пропускает (это же локальный адрес), а дальше роутер сам решает, что делать с трафиком — точно так же, как и всегда.
 
-Concretely: `install.sh` creates a network namespace on the router with a
-veth pair bridged into `br-lan`, giving it its own address,
-`192.168.2.250`. From the router's/ZeroBlock's point of view this looks
-like an ordinary extra device on the LAN. A tiny sing-box instance (SOCKS5
-+ HTTP CONNECT, "mixed" inbound) runs inside that namespace on port
-`2080`. Because it's indistinguishable from a real LAN client, its
-outbound connections ride the *existing* ZeroBlock TPROXY/domain-routing
-pipeline automatically - no VPN credentials are copied into this repo, no
-duplicated config to keep in sync. Whatever VPN ZeroBlock currently routes
-`claude.ai`/`anthropic.com` through is what this proxy uses too, including
-after you switch VPN servers on the router.
+Технически: `install.sh` создаёт на роутере сетевой namespace с veth-парой, подключённой в мост `br-lan`, с собственным адресом `192.168.2.250`. Для ZeroBlock это выглядит как обычное дополнительное устройство в локальной сети. Внутри namespace крутится отдельный sing-box (SOCKS5 + HTTP CONNECT, один порт на оба протокола) на `2080`. Поскольку его невозможно отличить от настоящего устройства в LAN, его исходящие соединения автоматически попадают в уже существующий пайплайн ZeroBlock (TPROXY + маршрутизация по доменам) — никакие VPN-пароли никуда не копируются, ничего не нужно синхронизировать вручную. Какой VPN сейчас реально использует ZeroBlock, тот же VPN использует и этот прокси, включая случаи, когда VPN-сервер на роутере меняется.
 
-Verified end-to-end on the router itself: a request through
-`socks5://192.168.2.250:2080` to `claude.ai` shows up in ZeroBlock's own
-connection log (`clash_api`, port 9090) as
-`"chains":["opera"], "host":"claude.ai", "sourceIP":"192.168.2.250"` -
-i.e. actually routed through the VPN outbound, not direct.
+Проверено end-to-end на самом роутере: запрос через `socks5://192.168.2.250:2080` к `claude.ai` виден в собственном логе ZeroBlock (`clash_api`, порт 9090) как `"chains":["opera"], "host":"claude.ai", "sourceIP":"192.168.2.250"` — то есть реально уходит через VPN, а не напрямую.
 
-## What this does NOT change
+## Что не меняется
 
-- ZeroBlock config/domains - untouched (unless you explicitly add more
-  domains, see "Extending the domain list" below).
-- Check Point - untouched, not even inspected beyond checking it's
-  running.
-- Any existing router service - this is a new, separate, additive systemd
-  init service (`/etc/init.d/homevpn-proxy`).
+- Настройки и список доменов ZeroBlock — не трогаются, кроме случаев, когда домены добавляете вы сами (см. ниже).
+- Check Point — не трогается вообще.
+- Всё остальное на роутере — новый, отдельный сервис (`/etc/init.d/homevpn-proxy`), никакие существующие сервисы не меняются.
 
-## Install
+## Установка на роутер
 
 ```sh
 scp -r router/ root@192.168.2.1:/tmp/homevpn-proxy-install
 ssh root@192.168.2.1 'sh /tmp/homevpn-proxy-install/install.sh'
 ```
 
-Requires the `kmod-veth` package on the router (installed automatically
-via `opkg` the first time if missing - needs internet access on the
-router at install time).
+Нужен пакет `kmod-veth` — при первом запуске установится сам через `opkg`, если его ещё нет (роутеру для этого нужен интернет).
 
-After install, the proxy listens at:
+После установки прокси слушает на:
 - `socks5://192.168.2.250:2080`
 - `http://192.168.2.250:2080` (HTTP CONNECT)
 
-Same port serves both protocols (sing-box "mixed" inbound auto-detects).
+Это один и тот же порт для обоих протоколов — sing-box сам определяет, что к нему пришло.
 
-## Uninstall (full rollback)
+## Откат (полностью убрать с роутера)
 
 ```sh
 ssh root@192.168.2.1 'sh /tmp/homevpn-proxy-install/uninstall.sh'
 ```
 
-Stops the service, deletes the network namespace/veth, removes
-`/etc/init.d/homevpn-proxy`, `/etc/homevpn-proxy/`, `/etc/netns/homevpn/`.
-Nothing else on the router is touched. `kmod-veth` is left installed
-(harmless, ~30 KB).
+Останавливает сервис, удаляет namespace/veth, `/etc/init.d/homevpn-proxy`, `/etc/homevpn-proxy/`, `/etc/netns/homevpn/`. Больше ничего на роутере не трогается. Пакет `kmod-veth` остаётся установленным (безобидный, ~30 КБ).
 
-## Windows setup
+## Настройка на Windows
 
-### Tray app (recommended)
+### Трей-приложение (рекомендуется)
 
-`windows/HomeVpnProxyTray/` is a small WPF-UI (Fluent) tray app that does
-everything below (env vars + PAC) with a toggle and shows live status -
-proxy reachability, Check Point connection state, the actual tunneled
-domain list (read live from the router's PAC), and the exact values being
-set (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY, AutoConfigURL), with a click to
-enable/disable and an autostart option.
+`windows/HomeVpnProxyTray/` — приложение в трее (WPF-UI, Fluent Design), которое включает/выключает всё сразу одной кнопкой и показывает живой статус: доступен ли прокси на роутере, подключён ли Check Point, актуальный список туннелируемых доменов (читается прямо из PAC на роутере), точные применяемые значения переменных и PAC, плюс автозапуск с Windows.
 
-Prebuilt exe (no rebuild needed): [download from Releases](https://github.com/art-crazy/homevpn-proxy/releases/latest)
-- just save it to `%LOCALAPPDATA%\HomeVpnProxyTray\HomeVpnProxyTray.exe`
-  and run it (see "Install" below for the shortcut step).
+Готовый exe без пересборки: [скачать из Releases](https://github.com/art-crazy/homevpn-proxy/releases/latest) → положить в `%LOCALAPPDATA%\HomeVpnProxyTray\HomeVpnProxyTray.exe` и запустить.
 
-**Install (from source):**
+**Установка из исходников:**
 
 ```powershell
 cd windows/HomeVpnProxyTray
 dotnet publish -c Release
 
-# Copy to a permanent location - not the build folder, which gets wiped
-# on every rebuild. The "autostart with Windows" toggle in the app
-# records whatever path it was launched from, so this has to happen
-# before turning that on.
+# В постоянное место — не в папку сборки, она стирается при каждой
+# пересборке. Автозапуск в приложении запоминает путь, из которого
+# его запустили, поэтому это нужно сделать до включения тумблера.
 New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\HomeVpnProxyTray" | Out-Null
 Copy-Item "bin\Release\net8.0-windows\win-x64\publish\HomeVpnProxyTray.exe" "$env:LOCALAPPDATA\HomeVpnProxyTray\" -Force
 
-# Optional: Start Menu shortcut
+# Необязательно: ярлык в Пуск
 $s = (New-Object -ComObject WScript.Shell).CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\HomeVPN Proxy.lnk")
 $s.TargetPath = "$env:LOCALAPPDATA\HomeVpnProxyTray\HomeVpnProxyTray.exe"
 $s.Save()
 ```
 
-Then run `%LOCALAPPDATA%\HomeVpnProxyTray\HomeVpnProxyTray.exe` (or the
-Start Menu shortcut) and turn on "Автозапуск с Windows" inside the app.
+Запустить `%LOCALAPPDATA%\HomeVpnProxyTray\HomeVpnProxyTray.exe` (или ярлык из Пуск) и включить тумблер «Автозапуск с Windows» внутри приложения.
 
-**Update:** re-run the publish + copy steps above after pulling changes -
-no uninstall step needed, it just overwrites the exe (close the running
-instance first via its tray menu, Windows won't let you overwrite a
-running exe).
+**Обновление:** закрыть приложение через меню в трее (Windows не даст перезаписать запущенный exe), повторить `dotnet publish` и `Copy-Item` — файл просто перезаписывается, отдельного удаления не требуется.
 
-**Uninstall:** quit via the tray menu, delete
-`%LOCALAPPDATA%\HomeVpnProxyTray\`, and toggle off autostart *before*
-deleting (or just delete the `HomeVpnProxyTray` value under
-`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` directly).
+**Удаление:** выйти через меню в трее, удалить значение `HomeVpnProxyTray` в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (или снять тумблер автозапуска в приложении перед удалением), удалить папку `%LOCALAPPDATA%\HomeVpnProxyTray\`.
 
-The sections below describe what it's actually doing under the hood /
-how to do it manually via the standalone scripts instead.
+### Вручную, без приложения (что оно делает под капотом)
 
-### Claude Code / Codex CLI / other CLI tools
-
-Point them at the proxy via the standard env vars. Two ways:
-
-**Session-scoped (safer - only affects the current terminal):**
-```powershell
-$env:HTTP_PROXY  = "http://192.168.2.250:2080"
-$env:HTTPS_PROXY = "http://192.168.2.250:2080"
-$env:ALL_PROXY   = "socks5://192.168.2.250:2080"
-```
-
-**Permanent (all new processes for your user pick it up):**
-```powershell
-windows/set-proxy.ps1     # sets it
-windows/unset-proxy.ps1   # removes it
-```
-
-Note the permanent option affects *every* process that respects these
-env vars (git, npm, curl, etc.), not just AI tools - since only
-`claude.ai`/`anthropic.com` are currently in ZeroBlock's tunneled domain
-list, everything else through this proxy just goes direct anyway, so in
-practice this is low-risk. Still, session-scoped is the more surgical
-option if you want to be strict about only routing AI-tool traffic this
-way.
-
-### Browser
-
-Uses a PAC (Proxy Auto-Config) script instead of a blanket system-wide
-proxy, so only `claude.ai`/`anthropic.com`/`claude.com` traffic goes
-through the LAN proxy - everything else (including corporate web apps)
-goes direct.
-
-The PAC file (`windows/homevpn-proxy.pac`) is hosted on the router itself
-at `http://192.168.2.1/homevpn-proxy.pac` (served by uhttpd, already
-deployed there) so it's reachable regardless of Check Point state and can
-be updated in one place.
+Переменные окружения — для Claude Code, Codex CLI и любых консольных инструментов:
 
 ```powershell
-windows/set-pac.ps1     # points Windows' automatic proxy config at it
-windows/unset-pac.ps1   # rollback
+windows/set-proxy.ps1     # включить
+windows/unset-proxy.ps1   # выключить
 ```
 
-Chrome/Edge pick this up via Windows' system proxy settings
-automatically. If you add more domains later (e.g. `chatgpt.com`), edit
-`windows/homevpn-proxy.pac` and re-upload it to `/www/homevpn-proxy.pac`
-on the router - no client-side changes needed.
+PAC-скрипт — для браузера (Chrome/Edge подхватывают через системные настройки прокси Windows автоматически):
 
-## Extending the domain list
+```powershell
+windows/set-pac.ps1     # включить
+windows/unset-pac.ps1   # выключить
+```
 
-Right now only `claude.ai`/`anthropic.com`-family domains are in
-ZeroBlock's `opera` profile domain list, so only those get tunneled -
-everything else through this proxy goes out directly (still bypasses
-Check Point, just doesn't get VPN'd). To also tunnel ChatGPT, add
-`chatgpt.com`, `openai.com` (and friends) to the `opera` profile's domain
-list via ZeroBlock's LuCI page - a normal, persisted UI change, not
-something this repo needs to manage.
+PAC-файл (`windows/homevpn-proxy.pac`) размещён прямо на роутере — `http://192.168.2.1/homevpn-proxy.pac` — поэтому доступен независимо от состояния Check Point.
 
-## Maintenance
+## Как добавить домен
 
-None, by design. Since the proxy rides ZeroBlock's live routing rather
-than a copied VPN config, switching VPN servers/profiles in ZeroBlock's
-UI does not require touching anything here.
+Список доменов, которые реально уходят в VPN, задаётся в ZeroBlock на роутере: LuCI → ZeroBlock → профиль `opera` → список доменов. Это обычная, штатная правка через веб-интерфейс, репозиторий её не хранит и не синхронизирует.
+
+**Важно:** PAC-файл для браузера (`windows/homevpn-proxy.pac`) — отдельный список, его нужно поддерживать в актуальном состоянии вручную. Если домен добавлен в ZeroBlock, но не добавлен в PAC — через CLI и переменные окружения он уже пойдёт через VPN, а в браузере ещё нет. После правки PAC-файла его нужно заново загрузить на роутер (`/www/homevpn-proxy.pac`) — на стороне Windows ничего менять не нужно.
+
+Сейчас в списке: `claude.ai`, `anthropic.com`, `claude.com`, `chatgpt.com`, `openai.com`, `oaistatic.com`, `oaiusercontent.com`.
+
+## Известные ограничения
+
+- Переживает ли сервис на роутере перезагрузку — на практике не проверялось (по логике должен: автозапуск через `enable` включён).
+- Если перезапустить ZeroBlock напрямую командой `/etc/init.d/zeroblock restart` из консоли (а не через сохранение в LuCI), прокси на роутере может отвалиться и не восстановиться сам — тогда нужно вручную выполнить `/etc/init.d/homevpn-proxy restart`.
+- Список доменов дублируется в двух местах (ZeroBlock и PAC-файл), синхронизация — вручную. Сделано осознанно: чтобы не хранить пароль от роутера внутри Windows-приложения.
