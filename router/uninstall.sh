@@ -6,6 +6,8 @@
 /etc/init.d/homevpn-proxy stop 2>/dev/null || true
 /etc/init.d/homevpn-proxy disable 2>/dev/null || true
 
+crontab -l 2>/dev/null | grep -v homevpn-proxy/healthcheck.sh | crontab - 2>/dev/null || true
+
 ip netns delete homevpn 2>/dev/null || true
 ip link delete veth-hv0 2>/dev/null || true
 
