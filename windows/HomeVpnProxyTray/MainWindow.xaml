@@ -140,8 +140,21 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Text="Пароль" VerticalAlignment="Center" Opacity="0.8" />
-                            <PasswordBox Grid.Column="1" x:Name="RouterPasswordBox" />
+                            <PasswordBox Grid.Column="1" x:Name="RouterPasswordBox" PasswordChanged="OnRouterPasswordChanged" />
                         </Grid>
+
+                        <ui:Button
+                            Content="Сохранить"
+                            Appearance="Secondary"
+                            HorizontalAlignment="Stretch"
+                            HorizontalContentAlignment="Center"
+                            Margin="0,0,0,12"
+                            Click="OnSaveRouterSettingsClick" />
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                            <Ellipse x:Name="RouterCheckDot" Width="10" Height="10" Fill="Gray" VerticalAlignment="Center" />
+                            <TextBlock x:Name="RouterCheckStatusText" Text="Статус не проверен" Margin="8,0,0,0" />
+                        </StackPanel>
 
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -149,22 +162,24 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
                             <ui:Button
+                                x:Name="CheckStatusButton"
                                 Grid.Column="0"
-                                Content="Сохранить"
-                                Appearance="Secondary"
+                                Content="Проверить"
+                                IsEnabled="False"
                                 Margin="0,0,6,0"
                                 HorizontalAlignment="Stretch"
                                 HorizontalContentAlignment="Center"
-                                Click="OnSaveRouterSettingsClick" />
+                                Click="OnCheckStatusClick" />
                             <ui:Button
-                                x:Name="CheckAndFixButton"
+                                x:Name="FixButton"
                                 Grid.Column="1"
-                                Content="Проверить и починить"
+                                Content="Починить"
+                                Appearance="Danger"
                                 IsEnabled="False"
                                 Margin="6,0,0,0"
                                 HorizontalAlignment="Stretch"
                                 HorizontalContentAlignment="Center"
-                                Click="OnCheckAndFixClick" />
+                                Click="OnFixClick" />
                         </Grid>
 
                         <TextBlock
