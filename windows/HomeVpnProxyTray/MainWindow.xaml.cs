@@ -28,6 +28,74 @@ public partial class MainWindow : FluentWindow
 
         RefreshToggles();
         _ = RefreshHealthAsync();
+        LoadRouterSettings();
+    }
+
+    private void LoadRouterSettings()
+    {
+        var settings = RouterSettingsStore.Load();
+        if (settings is not null)
+        {
+            RouterHostBox.Text = settings.Host;
+            RouterUsernameBox.Text = settings.Username;
+            // Password intentionally left blank - not redisplayed once saved.
+            RepairStatusText.Text = "Данные для входа сохранены. Оставьте пароль пустым, если не хотите его менять.";
+        }
+
+        CheckAndFixButton.IsEnabled = RouterSettingsStore.IsConfigured();
+    }
+
+    private void OnSaveRouterSettingsClick(object sender, RoutedEventArgs e)
+    {
+        var host = RouterHostBox.Text.Trim();
+        var username = RouterUsernameBox.Text.Trim();
+        var password = RouterPasswordBox.Password;
+
+        if (string.IsNullOrEmpty(host) || string.IsNullOrEmpty(username))
+        {
+            RepairStatusText.Text = "Укажите IP и логин.";
+            return;
+        }
+
+        if (string.IsNullOrEmpty(password))
+        {
+            var existing = RouterSettingsStore.Load();
+            if (existing is null)
+            {
+                RepairStatusText.Text = "Укажите пароль.";
+                return;
+            }
+            password = existing.Password;
+        }
+
+        RouterSettingsStore.Save(host, username, password);
+        RouterPasswordBox.Password = string.Empty;
+        CheckAndFixButton.IsEnabled = true;
+        RepairStatusText.Text = "Сохранено.";
+    }
+
+    private async void OnCheckAndFixClick(object sender, RoutedEventArgs e)
+    {
+        var settings = RouterSettingsStore.Load();
+        if (settings is null)
+        {
+            RepairStatusText.Text = "Сначала сохраните данные для входа.";
+            return;
+        }
+
+        CheckAndFixButton.IsEnabled = false;
+        RepairStatusText.Text = "Проверяю...";
+        try
+        {
+            var result = await RouterRepair.CheckAndFixAsync(settings);
+            RepairStatusText.Text = result.Message;
+        }
+        finally
+        {
+            CheckAndFixButton.IsEnabled = true;
+        }
+
+        _ = RefreshHealthAsync();
     }
 
     private void RefreshToggles()

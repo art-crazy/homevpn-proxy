@@ -1,6 +1,5 @@
 using System.Net.Http;
 using System.Net.NetworkInformation;
-using System.Net.Sockets;
 using System.Text.RegularExpressions;
 
 namespace HomeVpnProxyTray;
@@ -55,12 +54,28 @@ internal static class HealthChecker
         return new HealthSnapshot(proxyReachable, checkPointConnected, domains, error);
     }
 
+    // A plain TCP-connect check isn't enough: the router's sing-box process
+    // has been observed staying up and accepting connections on 2080 while
+    // unable to actually complete a TLS handshake through the tunnel
+    // (CONNECT succeeds, ClientHello gets reset). Only a real request
+    // through the proxy proves it's actually working end to end.
     private static async Task<bool> ProbeProxyAsync()
     {
-        using var client = new TcpClient();
-        var connectTask = client.ConnectAsync(Constants.ProxyHost, Constants.ProxyPort);
-        var completed = await Task.WhenAny(connectTask, Task.Delay(Constants.TcpProbeTimeoutMs));
-        return completed == connectTask && client.Connected;
+        try
+        {
+            using var handler = new HttpClientHandler
+            {
+                Proxy = new System.Net.WebProxy($"http://{Constants.ProxyHost}:{Constants.ProxyPort}"),
+                UseProxy = true,
+            };
+            using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
+            using var response = await client.GetAsync("http://example.com/");
+            return true; // any real HTTP response - even a non-2xx - proves the tunnel works
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public static bool CheckPointConnected()
