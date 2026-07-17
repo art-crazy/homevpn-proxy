@@ -45,8 +45,8 @@ internal static class RouterRepair
         {
             var code = RunCheck(client);
             return IsHealthy(code)
-                ? new RouterCheckResult(RouterProxyStatus.Healthy, $"Прокси работает (HTTP {code}).")
-                : new RouterCheckResult(RouterProxyStatus.Unhealthy, "Прокси не отвечает на запрос через тестовый URL.");
+                ? new RouterCheckResult(RouterProxyStatus.Healthy, $"Прокси: доступен на роутере (HTTP {code}).")
+                : new RouterCheckResult(RouterProxyStatus.Unhealthy, "Прокси: НЕ отвечает на роутере.");
         }
         catch (Exception ex)
         {
@@ -73,8 +73,8 @@ internal static class RouterRepair
 
             var code = RunCheck(client);
             return IsHealthy(code)
-                ? new RouterCheckResult(RouterProxyStatus.Healthy, "Сервис перезапущен, прокси работает.")
-                : new RouterCheckResult(RouterProxyStatus.Unhealthy, "Перезапустил сервис, но прокси всё ещё не отвечает - нужна ручная диагностика на роутере.");
+                ? new RouterCheckResult(RouterProxyStatus.Healthy, "Прокси: доступен на роутере (сервис перезапущен).")
+                : new RouterCheckResult(RouterProxyStatus.Unhealthy, "Перезапустил сервис, но прокси всё ещё не отвечает на роутере - нужна ручная диагностика.");
         }
         catch (Exception ex)
         {

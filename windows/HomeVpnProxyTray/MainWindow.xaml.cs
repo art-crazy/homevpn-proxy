@@ -210,7 +210,7 @@ public partial class MainWindow : FluentWindow
     private void RenderHealth(HealthSnapshot snapshot, bool enabled)
     {
         ProxyStatusText.Text = enabled
-            ? (snapshot.ProxyReachable ? "Прокси на роутере: доступен" : "Прокси на роутере: НЕ отвечает")
+            ? (snapshot.ProxyReachable ? "Прокси: доступен с этого ПК" : "Прокси: НЕ отвечает с этого ПК")
             : "Прокси выключен";
         ProxyStatusDot.Fill = new SolidColorBrush(enabled
             ? (snapshot.ProxyReachable ? Colors.SeaGreen : Colors.Firebrick)
