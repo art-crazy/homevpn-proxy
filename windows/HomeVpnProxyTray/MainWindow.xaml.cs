@@ -41,7 +41,16 @@ public partial class MainWindow : FluentWindow
 
         RefreshToggles();
         LoadRouterSettings();
-        _ = RefreshAmbientInfoAsync();
+
+        // Not called directly here: the constructor runs before WPF's
+        // Dispatcher message loop starts, so SynchronizationContext.Current
+        // isn't set up yet and the continuation after the await below would
+        // resume on a thread-pool thread instead of the UI thread - any UI
+        // update then throws a cross-thread exception that a fire-and-forget
+        // call swallows silently, leaving the "Загрузка..." placeholder
+        // stuck forever. Loaded fires once the window is part of the
+        // running dispatcher loop, so the continuation resumes correctly.
+        Loaded += (_, _) => _ = RefreshAmbientInfoAsync();
     }
 
     private void LoadRouterSettings()
