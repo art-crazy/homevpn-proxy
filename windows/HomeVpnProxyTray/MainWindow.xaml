@@ -38,10 +38,10 @@
                     <ui:ToggleSwitch x:Name="MasterToggle" Checked="OnMasterToggleChanged" Unchecked="OnMasterToggleChanged" />
                 </ui:CardControl>
 
-                <!-- Live status: one button runs the whole sequence (local check,
-                     then - only if that fails and router credentials are set -
-                     an SSH check, diagnosis, and an automatic fix attempt), with
-                     every command it runs logged so nothing happens silently. -->
+                <!-- Live status: "Проверить" runs local + (if configured) router-side
+                     SSH checks and diagnosis; "Починить" (enabled only once a check
+                     has actually found a problem) restarts the service and re-checks.
+                     Both share the same log below so nothing runs silently. -->
                 <TextBlock Text="Состояние" FontSize="12" FontWeight="SemiBold" Opacity="0.7" Margin="4,0,0,8" />
                 <Border CornerRadius="8" Background="{DynamicResource ControlFillColorDefaultBrush}" Padding="14" Margin="0,0,0,16">
                     <StackPanel>
@@ -80,13 +80,30 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
 
-                        <ui:Button
-                            x:Name="RunDiagnosticsButton"
-                            Content="Проверить"
-                            HorizontalAlignment="Stretch"
-                            HorizontalContentAlignment="Center"
-                            Margin="0,12,0,0"
-                            Click="OnRunDiagnosticsClick" />
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <ui:Button
+                                x:Name="RunCheckButton"
+                                Grid.Column="0"
+                                Content="Проверить"
+                                Margin="0,0,6,0"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center"
+                                Click="OnRunCheckClick" />
+                            <ui:Button
+                                x:Name="RunFixButton"
+                                Grid.Column="1"
+                                Content="Починить"
+                                Appearance="Danger"
+                                IsEnabled="False"
+                                Margin="6,0,0,0"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center"
+                                Click="OnRunFixClick" />
+                        </Grid>
                     </StackPanel>
                 </Border>
 

@@ -25,6 +25,7 @@ public partial class MainWindow : FluentWindow
     private bool _suppressEvents;
     private bool _routerPasswordTouched;
     private readonly List<string> _diagnosticsLog = new();
+    private RouterConnectionSettings? _lastCheckedSettings;
 
     public MainWindow()
     {
@@ -106,7 +107,9 @@ public partial class MainWindow : FluentWindow
         RepairStatusText.Text = "Сохранено.";
     }
 
-    // ---- Unified diagnostics: one button, full sequence, every step logged ----
+    // ---- Diagnostics: "Проверить" (read-only) and "Починить" (restarts the
+    // service) are separate actions, sharing the same log below so nothing
+    // either of them does happens silently. ----
 
     private void ClearLog()
     {
@@ -134,24 +137,26 @@ public partial class MainWindow : FluentWindow
         });
     }
 
-    private async void OnRunDiagnosticsClick(object sender, RoutedEventArgs e)
+    private async void OnRunCheckClick(object sender, RoutedEventArgs e)
     {
-        RunDiagnosticsButton.IsEnabled = false;
+        RunCheckButton.IsEnabled = false;
+        RunFixButton.IsEnabled = false;
+        _lastCheckedSettings = null;
         ClearLog();
 
         try
         {
-            await RunDiagnosticsAsync();
+            await RunCheckAsync();
         }
         finally
         {
-            RunDiagnosticsButton.IsEnabled = true;
+            RunCheckButton.IsEnabled = true;
         }
 
         _ = RefreshAmbientInfoAsync();
     }
 
-    private async Task RunDiagnosticsAsync()
+    private async Task RunCheckAsync()
     {
         if (!ProxyToggle.IsEnabled())
         {
@@ -180,7 +185,7 @@ public partial class MainWindow : FluentWindow
         {
             SetOverallStatus(RouterProxyStatus.Unhealthy, "Прокси: не отвечает с этого ПК");
             Log();
-            Log("Настройте подключение к роутеру ниже, чтобы автоматически диагностировать и попытаться починить.");
+            Log("Настройте подключение к роутеру ниже, чтобы диагностировать и починить.");
             return;
         }
 
@@ -206,11 +211,11 @@ public partial class MainWindow : FluentWindow
             {
                 SetOverallStatus(RouterProxyStatus.Unhealthy, "Прокси: работает на роутере, но недоступен с этого ПК");
                 Log();
-                Log("Прокси на роутере в порядке - проблема, похоже, в сети между компьютером и роутером (Wi-Fi, Check Point и т.п.), а не в самом прокси.");
+                Log("Прокси на роутере в порядке - проблема, похоже, в сети между компьютером и роутером (Wi-Fi, Check Point и т.п.), а не в самом прокси. Перезапуск сервиса это не починит.");
                 return;
             }
 
-            SetOverallStatus(RouterProxyStatus.Unknown, "Диагностирую...");
+            SetOverallStatus(RouterProxyStatus.Unhealthy, "Прокси: не отвечает на роутере");
             Log();
             Log("Диагностика состояния сервиса:");
             await LogStep(session, "статус сервиса", RouterSshSession.ProcdStatusCommand, settings);
@@ -223,9 +228,51 @@ public partial class MainWindow : FluentWindow
                 Log("  (нет записи)");
             }
 
-            SetOverallStatus(RouterProxyStatus.Unknown, "Чиню...");
             Log();
-            Log("Пытаюсь починить (перезапуск сервиса):");
+            Log("Нажмите «Починить», чтобы перезапустить сервис на роутере.");
+
+            _lastCheckedSettings = settings;
+            RunFixButton.IsEnabled = true;
+        }
+    }
+
+    private async void OnRunFixClick(object sender, RoutedEventArgs e)
+    {
+        var settings = _lastCheckedSettings ?? RouterSettingsStore.Load();
+        if (settings is null) return;
+
+        RunCheckButton.IsEnabled = false;
+        RunFixButton.IsEnabled = false;
+        ClearLog();
+
+        try
+        {
+            await RunFixAsync(settings);
+        }
+        finally
+        {
+            RunCheckButton.IsEnabled = true;
+        }
+
+        _ = RefreshAmbientInfoAsync();
+    }
+
+    private async Task RunFixAsync(RouterConnectionSettings settings)
+    {
+        SetOverallStatus(RouterProxyStatus.Unknown, "Чиню...");
+        Log("Подключаюсь к роутеру по SSH...");
+        var (session, connectError) = await RouterSshSession.ConnectAsync(settings);
+        if (session is null)
+        {
+            SetOverallStatus(RouterProxyStatus.Unknown, "Не удалось подключиться к роутеру");
+            Log("→ " + connectError);
+            RunFixButton.IsEnabled = true;
+            return;
+        }
+
+        using (session)
+        {
+            Log("Перезапуск сервиса:");
             Log("$ " + RouterSshSession.Describe(settings, RouterSshSession.RestartCommand));
             await session.RunAsync(RouterSshSession.RestartCommand);
             Log("→ выполнено, жду 3 секунды...");
@@ -234,18 +281,18 @@ public partial class MainWindow : FluentWindow
             Log();
             Log("Повторная проверка на роутере:");
             Log("$ " + RouterSshSession.Describe(settings, RouterSshSession.CheckCommand));
-            var code2 = await session.RunAsync(RouterSshSession.CheckCommand);
-            var routerHealthyAfter = RouterSshSession.IsHealthyHttpCode(code2);
-            Log("→ " + (routerHealthyAfter ? $"HTTP {code2}" : "нет ответа"));
+            var code = await session.RunAsync(RouterSshSession.CheckCommand);
+            var routerHealthyAfter = RouterSshSession.IsHealthyHttpCode(code);
+            Log("→ " + (routerHealthyAfter ? $"HTTP {code}" : "нет ответа"));
 
             Log();
             Log("Повторная локальная проверка (с этого ПК):");
             Log("$ " + HealthChecker.DescribeLocalCheckCommand());
-            var localOk2 = await HealthChecker.ProbeProxyAsync();
-            Log("→ " + (localOk2 ? "OK" : "не отвечает"));
+            var localOk = await HealthChecker.ProbeProxyAsync();
+            Log("→ " + (localOk ? "OK" : "не отвечает"));
 
             Log();
-            if (localOk2)
+            if (localOk)
             {
                 SetOverallStatus(RouterProxyStatus.Healthy, "Прокси: починен, работает");
                 Log("Проблема устранена.");
@@ -259,6 +306,7 @@ public partial class MainWindow : FluentWindow
             {
                 SetOverallStatus(RouterProxyStatus.Unhealthy, "Прокси: не удалось починить");
                 Log("Перезапуск не помог - нужна ручная диагностика на роутере.");
+                RunFixButton.IsEnabled = true;
             }
         }
     }
