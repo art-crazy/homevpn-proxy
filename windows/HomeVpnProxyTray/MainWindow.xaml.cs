@@ -337,9 +337,11 @@ public partial class MainWindow : FluentWindow
             ? Colors.SteelBlue
             : Colors.Gray);
 
-        DomainsItemsControl.ItemsSource = snapshot.TunneledDomains.Count == 0
-            ? new[] { "(не удалось прочитать PAC с роутера)" }
-            : snapshot.TunneledDomains.Select(d => "*." + d).ToArray();
+        DomainsItemsControl.ItemsSource = !enabled
+            ? new[] { "(прокси выключен)" }
+            : snapshot.TunneledDomains.Count == 0
+                ? new[] { "(не удалось прочитать PAC с роутера)" }
+                : snapshot.TunneledDomains.Select(d => "*." + d).ToArray();
     }
 
     private static bool SafeCheckPointConnected()
