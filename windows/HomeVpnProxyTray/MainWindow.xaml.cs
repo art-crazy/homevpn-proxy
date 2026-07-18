@@ -110,6 +110,8 @@ public partial class MainWindow : FluentWindow
 
     private void ClearLog()
     {
+        DiagnosticsEmptyState.Visibility = Visibility.Collapsed;
+        DiagnosticsScrollViewer.Visibility = Visibility.Visible;
         _diagnosticsLog.Clear();
         DiagnosticsLogText.Text = "";
     }
@@ -208,6 +210,7 @@ public partial class MainWindow : FluentWindow
                 return;
             }
 
+            SetOverallStatus(RouterProxyStatus.Unknown, "Диагностирую...");
             Log();
             Log("Диагностика состояния сервиса:");
             await LogStep(session, "статус сервиса", RouterSshSession.ProcdStatusCommand, settings);
@@ -220,6 +223,7 @@ public partial class MainWindow : FluentWindow
                 Log("  (нет записи)");
             }
 
+            SetOverallStatus(RouterProxyStatus.Unknown, "Чиню...");
             Log();
             Log("Пытаюсь починить (перезапуск сервиса):");
             Log("$ " + RouterSshSession.Describe(settings, RouterSshSession.RestartCommand));

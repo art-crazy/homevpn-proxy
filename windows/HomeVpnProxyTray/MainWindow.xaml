@@ -50,10 +50,20 @@
                             <TextBlock x:Name="OverallStatusText" Text="Прокси: не проверялся" Margin="8,0,0,0" FontWeight="SemiBold" />
                         </StackPanel>
 
-                        <Border CornerRadius="6" Background="{DynamicResource ControlFillColorSecondaryBrush}" Padding="10" Margin="0,0,0,10">
-                            <ScrollViewer x:Name="DiagnosticsScrollViewer" MaxHeight="160" VerticalScrollBarVisibility="Auto">
-                                <TextBlock x:Name="DiagnosticsLogText" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" Text="Нажмите «Проверить»." Opacity="0.85" />
-                            </ScrollViewer>
+                        <Border CornerRadius="6" Background="{DynamicResource ControlFillColorSecondaryBrush}" Margin="0,0,0,10">
+                            <Grid MinHeight="130" MaxHeight="200">
+                                <!-- Empty state: shown until the first check runs -->
+                                <StackPanel x:Name="DiagnosticsEmptyState" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                    <ui:SymbolIcon Symbol="PulseSquare24" FontSize="26" Opacity="0.3" HorizontalAlignment="Center" />
+                                    <TextBlock Text="Нет данных" FontSize="12" Opacity="0.5" HorizontalAlignment="Center" Margin="0,10,0,2" />
+                                    <TextBlock Text="Нажмите «Проверить», чтобы посмотреть статус" FontSize="11" Opacity="0.35" HorizontalAlignment="Center" />
+                                </StackPanel>
+
+                                <!-- Log: shown once a check has run -->
+                                <ScrollViewer x:Name="DiagnosticsScrollViewer" Visibility="Collapsed" Padding="12" VerticalScrollBarVisibility="Auto">
+                                    <TextBlock x:Name="DiagnosticsLogText" FontFamily="Consolas" FontSize="11" TextWrapping="Wrap" />
+                                </ScrollViewer>
+                            </Grid>
                         </Border>
 
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
