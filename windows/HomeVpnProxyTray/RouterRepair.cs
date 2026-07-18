@@ -23,9 +23,8 @@ public sealed record RouterCheckResult(RouterProxyStatus Status, string Message)
 internal static class RouterRepair
 {
     private const string ProxyUrl = "http://192.168.2.250:2080";
-    private const string TestUrl = "http://example.com/";
-    private const string CheckCommand =
-        $"curl -s -o /dev/null -w '%{{http_code}}' --max-time 6 -x {ProxyUrl} {TestUrl}";
+    private static readonly string CheckCommand =
+        $"curl -s -o /dev/null -w '%{{http_code}}' --max-time 6 -x {ProxyUrl} {Constants.HealthCheckTestUrl}";
 
     public static Task<RouterCheckResult> CheckAsync(RouterConnectionSettings settings) =>
         Task.Run(() => Check(settings));

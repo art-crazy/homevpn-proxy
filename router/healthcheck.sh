@@ -7,7 +7,13 @@
 # NOT catch this - has to be an actual request through the proxy.
 
 LOGTAG="homevpn-proxy-healthcheck"
-TEST_URL="http://example.com/"
+# Has to be a domain that's actually in ZeroBlock's tunneled list and goes
+# through the VPN outbound - testing an unrelated direct-out domain
+# (e.g. example.com) means a transient hiccup on the *direct* internet
+# path reads as "proxy is broken" even though the VPN path everything
+# actually cares about (Claude/ChatGPT) is fine. A lightweight static
+# asset, not the main page, to go easy on bot-detection/rate-limiting.
+TEST_URL="https://chatgpt.com/favicon.ico"
 # cron runs in the router's main network namespace, not "homevpn" - its
 # own 127.0.0.1 is a *different* loopback than the one sing-box listens
 # on inside that namespace. Has to be the LAN-visible veth address.

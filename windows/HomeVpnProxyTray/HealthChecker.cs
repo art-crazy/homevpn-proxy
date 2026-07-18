@@ -69,7 +69,7 @@ internal static class HealthChecker
                 UseProxy = true,
             };
             using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
-            using var response = await client.GetAsync("http://example.com/");
+            using var response = await client.GetAsync(Constants.HealthCheckTestUrl);
             return true; // any real HTTP response - even a non-2xx - proves the tunnel works
         }
         catch
