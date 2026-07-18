@@ -52,12 +52,10 @@ public partial class MainWindow : FluentWindow
             RouterPasswordBox.Password = RouterPasswordPlaceholder;
             _suppressEvents = false;
             _routerPasswordTouched = false;
-
-            RepairStatusText.Text = "Данные для входа сохранены. Оставьте пароль как есть, если не хотите его менять.";
         }
 
         CheckStatusButton.IsEnabled = RouterSettingsStore.IsConfigured();
-        RenderRouterStatus(RouterProxyStatus.Unknown, "Статус не проверен");
+        RenderRouterStatus(RouterProxyStatus.Unknown, "Прокси на роутере (SSH): не проверялся");
     }
 
     private void OnRouterPasswordChanged(object sender, RoutedEventArgs e)
@@ -138,6 +136,7 @@ public partial class MainWindow : FluentWindow
         {
             var result = await RouterRepair.CheckAsync(settings);
             RenderRouterStatus(result.Status, result.Message);
+            RouterCheckCommandText.Text = RouterRepair.DescribeCheckCommand(settings);
         }
         finally
         {
@@ -153,6 +152,7 @@ public partial class MainWindow : FluentWindow
         CheckStatusButton.IsEnabled = false;
         FixButton.IsEnabled = false;
         RenderRouterStatus(RouterProxyStatus.Unknown, "Чиню...");
+        RouterCheckCommandText.Text = RouterRepair.DescribeFixCommand(settings);
         try
         {
             var result = await RouterRepair.FixAsync(settings);
@@ -215,6 +215,7 @@ public partial class MainWindow : FluentWindow
         ProxyStatusDot.Fill = new SolidColorBrush(enabled
             ? (snapshot.ProxyReachable ? Colors.SeaGreen : Colors.Firebrick)
             : Colors.Gray);
+        LocalCheckCommandText.Text = enabled ? HealthChecker.DescribeLocalCheckCommand() : "";
 
         CheckPointStatusText.Text = snapshot.CheckPointConnected
             ? "Check Point: подключён"

@@ -14,6 +14,11 @@ internal static class HealthChecker
 {
     private static readonly HttpClient HttpClient = new() { Timeout = TimeSpan.FromSeconds(4) };
 
+    // Shown in the UI next to the local check result, so it's obvious
+    // exactly what got tested instead of just trusting a green/red dot.
+    public static string DescribeLocalCheckCommand() =>
+        $"curl -x http://{Constants.ProxyHost}:{Constants.ProxyPort} {Constants.HealthCheckTestUrl}";
+
     public static async Task<HealthSnapshot> RunAsync()
     {
         var proxyTask = ProbeProxyAsync();

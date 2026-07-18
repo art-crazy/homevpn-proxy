@@ -32,6 +32,16 @@ internal static class RouterRepair
     public static Task<RouterCheckResult> FixAsync(RouterConnectionSettings settings) =>
         Task.Run(() => Fix(settings));
 
+    // Shown in the UI so it's obvious exactly what ran on the router - the
+    // password is masked with a fixed placeholder (not its real length)
+    // rather than omitted, so it still reads as "yes, a password is used
+    // here" without leaking anything about it.
+    public static string DescribeCheckCommand(RouterConnectionSettings settings) =>
+        $"ssh {settings.Username}@{settings.Host} (пароль: ••••••••••) \"{CheckCommand}\"";
+
+    public static string DescribeFixCommand(RouterConnectionSettings settings) =>
+        $"ssh {settings.Username}@{settings.Host} (пароль: ••••••••••) \"/etc/init.d/homevpn-proxy restart && {CheckCommand}\"";
+
     private static RouterCheckResult Check(RouterConnectionSettings settings)
     {
         using var client = TryConnect(settings, out var connectError);
