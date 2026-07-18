@@ -24,6 +24,7 @@ public partial class MainWindow : FluentWindow
 
     private bool _suppressEvents;
     private bool _routerPasswordTouched;
+    private readonly List<string> _diagnosticsLog = new();
 
     public MainWindow()
     {
@@ -36,8 +37,8 @@ public partial class MainWindow : FluentWindow
         PacUrlValueBox.Text = Constants.PacUrl;
 
         RefreshToggles();
-        _ = RefreshHealthAsync();
         LoadRouterSettings();
+        _ = RefreshAmbientInfoAsync();
     }
 
     private void LoadRouterSettings()
@@ -53,9 +54,6 @@ public partial class MainWindow : FluentWindow
             _suppressEvents = false;
             _routerPasswordTouched = false;
         }
-
-        CheckStatusButton.IsEnabled = RouterSettingsStore.IsConfigured();
-        RenderRouterStatus(RouterProxyStatus.Unknown, "Прокси на роутере (SSH): не проверялся");
     }
 
     private void OnRouterPasswordChanged(object sender, RoutedEventArgs e)
@@ -105,72 +103,201 @@ public partial class MainWindow : FluentWindow
         _suppressEvents = false;
         _routerPasswordTouched = false;
 
-        CheckStatusButton.IsEnabled = true;
         RepairStatusText.Text = "Сохранено.";
     }
 
-    private void RenderRouterStatus(RouterProxyStatus status, string message)
-    {
-        // DiagnoseService() appends a second line with the specific
-        // service-state checks (veth/bridge, ARP, process) when the
-        // functional check fails - kept visually separate from the
-        // one-line status so the status line stays short.
-        var lines = message.Split('\n', 2);
-        RouterCheckStatusText.Text = lines[0];
-        RouterCheckDetailText.Text = lines.Length > 1 ? lines[1] : "";
+    // ---- Unified diagnostics: one button, full sequence, every step logged ----
 
-        RouterCheckDot.Fill = new SolidColorBrush(status switch
+    private void ClearLog()
+    {
+        _diagnosticsLog.Clear();
+        DiagnosticsLogText.Text = "";
+    }
+
+    private void Log(string line = "")
+    {
+        _diagnosticsLog.Add(line);
+        DiagnosticsLogText.Text = string.Join("\n", _diagnosticsLog);
+        DiagnosticsScrollViewer.ScrollToBottom();
+    }
+
+    private void SetOverallStatus(RouterProxyStatus status, string text)
+    {
+        OverallStatusText.Text = text;
+        OverallStatusDot.Fill = new SolidColorBrush(status switch
         {
             RouterProxyStatus.Healthy => Colors.SeaGreen,
             RouterProxyStatus.Unhealthy => Colors.Firebrick,
             _ => Colors.Gray,
         });
-        FixButton.IsEnabled = status == RouterProxyStatus.Unhealthy;
     }
 
-    private async void OnCheckStatusClick(object sender, RoutedEventArgs e)
+    private async void OnRunDiagnosticsClick(object sender, RoutedEventArgs e)
     {
-        var settings = RouterSettingsStore.Load();
-        if (settings is null)
+        RunDiagnosticsButton.IsEnabled = false;
+        ClearLog();
+
+        try
         {
-            RepairStatusText.Text = "Сначала сохраните данные для входа.";
+            await RunDiagnosticsAsync();
+        }
+        finally
+        {
+            RunDiagnosticsButton.IsEnabled = true;
+        }
+
+        _ = RefreshAmbientInfoAsync();
+    }
+
+    private async Task RunDiagnosticsAsync()
+    {
+        if (!ProxyToggle.IsEnabled())
+        {
+            SetOverallStatus(RouterProxyStatus.Unknown, "Прокси выключен");
+            Log("Прокси сейчас выключен (тумблер вверху) - включите его, чтобы проверить.");
             return;
         }
 
-        CheckStatusButton.IsEnabled = false;
-        RenderRouterStatus(RouterProxyStatus.Unknown, "Проверяю...");
-        try
+        SetOverallStatus(RouterProxyStatus.Unknown, "Проверяю...");
+
+        Log("Локальная проверка (с этого ПК):");
+        Log("$ " + HealthChecker.DescribeLocalCheckCommand());
+        var localOk = await HealthChecker.ProbeProxyAsync();
+        Log(localOk ? "→ OK" : "→ не отвечает");
+
+        if (localOk)
         {
-            var result = await RouterRepair.CheckAsync(settings);
-            RenderRouterStatus(result.Status, result.Message);
-            RouterCheckCommandText.Text = RouterRepair.DescribeCheckCommand(settings);
+            SetOverallStatus(RouterProxyStatus.Healthy, "Прокси: работает");
+            Log();
+            Log("Всё в порядке.");
+            return;
         }
-        finally
+
+        var settings = RouterSettingsStore.Load();
+        if (settings is null)
         {
-            CheckStatusButton.IsEnabled = true;
+            SetOverallStatus(RouterProxyStatus.Unhealthy, "Прокси: не отвечает с этого ПК");
+            Log();
+            Log("Настройте подключение к роутеру ниже, чтобы автоматически диагностировать и попытаться починить.");
+            return;
+        }
+
+        Log();
+        Log("Подключаюсь к роутеру по SSH...");
+        var (session, connectError) = await RouterSshSession.ConnectAsync(settings);
+        if (session is null)
+        {
+            SetOverallStatus(RouterProxyStatus.Unknown, "Не удалось подключиться к роутеру");
+            Log("→ " + connectError);
+            return;
+        }
+
+        using (session)
+        {
+            Log("Проверка прокси на роутере:");
+            Log("$ " + RouterSshSession.Describe(settings, RouterSshSession.CheckCommand));
+            var code = await session.RunAsync(RouterSshSession.CheckCommand);
+            var routerHealthy = RouterSshSession.IsHealthyHttpCode(code);
+            Log("→ " + (routerHealthy ? $"HTTP {code}" : "нет ответа"));
+
+            if (routerHealthy)
+            {
+                SetOverallStatus(RouterProxyStatus.Unhealthy, "Прокси: работает на роутере, но недоступен с этого ПК");
+                Log();
+                Log("Прокси на роутере в порядке - проблема, похоже, в сети между компьютером и роутером (Wi-Fi, Check Point и т.п.), а не в самом прокси.");
+                return;
+            }
+
+            Log();
+            Log("Диагностика состояния сервиса:");
+            await LogStep(session, "статус сервиса", RouterSshSession.ProcdStatusCommand, settings);
+            await LogStep(session, "процесс sing-box", RouterSshSession.ProcessCheckCommand, settings);
+            await LogStep(session, "network namespace", RouterSshSession.NetnsCheckCommand, settings);
+            await LogStep(session, "veth в мосту br-lan", RouterSshSession.VethCheckCommand, settings);
+            var arp = await LogStep(session, "ARP для 192.168.2.250", RouterSshSession.ArpCheckCommand, settings);
+            if (string.IsNullOrEmpty(arp))
+            {
+                Log("  (нет записи)");
+            }
+
+            Log();
+            Log("Пытаюсь починить (перезапуск сервиса):");
+            Log("$ " + RouterSshSession.Describe(settings, RouterSshSession.RestartCommand));
+            await session.RunAsync(RouterSshSession.RestartCommand);
+            Log("→ выполнено, жду 3 секунды...");
+            await Task.Delay(3000);
+
+            Log();
+            Log("Повторная проверка на роутере:");
+            Log("$ " + RouterSshSession.Describe(settings, RouterSshSession.CheckCommand));
+            var code2 = await session.RunAsync(RouterSshSession.CheckCommand);
+            var routerHealthyAfter = RouterSshSession.IsHealthyHttpCode(code2);
+            Log("→ " + (routerHealthyAfter ? $"HTTP {code2}" : "нет ответа"));
+
+            Log();
+            Log("Повторная локальная проверка (с этого ПК):");
+            Log("$ " + HealthChecker.DescribeLocalCheckCommand());
+            var localOk2 = await HealthChecker.ProbeProxyAsync();
+            Log("→ " + (localOk2 ? "OK" : "не отвечает"));
+
+            Log();
+            if (localOk2)
+            {
+                SetOverallStatus(RouterProxyStatus.Healthy, "Прокси: починен, работает");
+                Log("Проблема устранена.");
+            }
+            else if (routerHealthyAfter)
+            {
+                SetOverallStatus(RouterProxyStatus.Unhealthy, "Прокси: работает на роутере, но всё ещё недоступен с этого ПК");
+                Log("Сервис на роутере починен, но с этого ПК всё равно не отвечает - проверьте сеть/Check Point.");
+            }
+            else
+            {
+                SetOverallStatus(RouterProxyStatus.Unhealthy, "Прокси: не удалось починить");
+                Log("Перезапуск не помог - нужна ручная диагностика на роутере.");
+            }
         }
     }
 
-    private async void OnFixClick(object sender, RoutedEventArgs e)
+    private async Task<string> LogStep(RouterSshSession session, string label, string command, RouterConnectionSettings settings)
     {
-        var settings = RouterSettingsStore.Load();
-        if (settings is null) return;
+        Log($"$ {RouterSshSession.Describe(settings, command)}");
+        var result = await session.RunAsync(command);
+        Log($"→ {label}: {result}");
+        return result;
+    }
 
-        CheckStatusButton.IsEnabled = false;
-        FixButton.IsEnabled = false;
-        RenderRouterStatus(RouterProxyStatus.Unknown, "Чиню...");
-        RouterCheckCommandText.Text = RouterRepair.DescribeFixCommand(settings);
+    // ---- Ambient info: Check Point + tunneled domain list, always current, not part of the diagnostic run ----
+
+    private async Task RefreshAmbientInfoAsync()
+    {
+        var enabled = ProxyToggle.IsEnabled();
+        var snapshot = enabled
+            ? await HealthChecker.RunAsync()
+            : new HealthSnapshot(false, SafeCheckPointConnected(), Array.Empty<string>(), null);
+
+        CheckPointStatusText.Text = snapshot.CheckPointConnected
+            ? "Check Point: подключён"
+            : "Check Point: не подключён";
+        CheckPointStatusDot.Fill = new SolidColorBrush(snapshot.CheckPointConnected
+            ? Colors.SteelBlue
+            : Colors.Gray);
+
+        DomainsItemsControl.ItemsSource = snapshot.TunneledDomains.Count == 0
+            ? new[] { "(не удалось прочитать PAC с роутера)" }
+            : snapshot.TunneledDomains.Select(d => "*." + d).ToArray();
+    }
+
+    private static bool SafeCheckPointConnected()
+    {
         try
         {
-            var result = await RouterRepair.FixAsync(settings);
-            RenderRouterStatus(result.Status, result.Message);
+            return HealthChecker.CheckPointConnected();
         }
-        finally
+        catch
         {
-            CheckStatusButton.IsEnabled = true;
+            return false;
         }
-
-        _ = RefreshHealthAsync();
     }
 
     private void RefreshToggles()
@@ -192,50 +319,6 @@ public partial class MainWindow : FluentWindow
         }
     }
 
-    private async Task RefreshHealthAsync()
-    {
-        var enabled = ProxyToggle.IsEnabled();
-        var snapshot = enabled
-            ? await HealthChecker.RunAsync()
-            : new HealthSnapshot(false, SafeCheckPointConnected(), Array.Empty<string>(), null);
-
-        RenderHealth(snapshot, enabled);
-    }
-
-    private static bool SafeCheckPointConnected()
-    {
-        try
-        {
-            return HealthChecker.CheckPointConnected();
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private void RenderHealth(HealthSnapshot snapshot, bool enabled)
-    {
-        ProxyStatusText.Text = enabled
-            ? (snapshot.ProxyReachable ? "Прокси: доступен с этого ПК" : "Прокси: НЕ отвечает с этого ПК")
-            : "Прокси выключен";
-        ProxyStatusDot.Fill = new SolidColorBrush(enabled
-            ? (snapshot.ProxyReachable ? Colors.SeaGreen : Colors.Firebrick)
-            : Colors.Gray);
-        LocalCheckCommandText.Text = enabled ? HealthChecker.DescribeLocalCheckCommand() : "";
-
-        CheckPointStatusText.Text = snapshot.CheckPointConnected
-            ? "Check Point: подключён"
-            : "Check Point: не подключён";
-        CheckPointStatusDot.Fill = new SolidColorBrush(snapshot.CheckPointConnected
-            ? Colors.SteelBlue
-            : Colors.Gray);
-
-        DomainsItemsControl.ItemsSource = snapshot.TunneledDomains.Count == 0
-            ? new[] { "(не удалось прочитать PAC с роутера)" }
-            : snapshot.TunneledDomains.Select(d => "*." + d).ToArray();
-    }
-
     private void OnMasterToggleChanged(object sender, RoutedEventArgs e)
     {
         if (_suppressEvents) return;
@@ -250,7 +333,7 @@ public partial class MainWindow : FluentWindow
         }
 
         RefreshToggles();
-        _ = RefreshHealthAsync();
+        _ = RefreshAmbientInfoAsync();
     }
 
     private void OnAutoStartToggleChanged(object sender, RoutedEventArgs e)
@@ -258,6 +341,4 @@ public partial class MainWindow : FluentWindow
         if (_suppressEvents) return;
         AutoStartManager.SetEnabled(AutoStartToggle.IsChecked == true);
     }
-
-    private void OnRefreshClick(object sender, RoutedEventArgs e) => _ = RefreshHealthAsync();
 }

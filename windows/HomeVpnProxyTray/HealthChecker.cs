@@ -64,7 +64,7 @@ internal static class HealthChecker
     // unable to actually complete a TLS handshake through the tunnel
     // (CONNECT succeeds, ClientHello gets reset). Only a real request
     // through the proxy proves it's actually working end to end.
-    private static async Task<bool> ProbeProxyAsync()
+    public static async Task<bool> ProbeProxyAsync()
     {
         try
         {
