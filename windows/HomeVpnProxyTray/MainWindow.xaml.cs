@@ -111,7 +111,14 @@ public partial class MainWindow : FluentWindow
 
     private void RenderRouterStatus(RouterProxyStatus status, string message)
     {
-        RouterCheckStatusText.Text = message;
+        // DiagnoseService() appends a second line with the specific
+        // service-state checks (veth/bridge, ARP, process) when the
+        // functional check fails - kept visually separate from the
+        // one-line status so the status line stays short.
+        var lines = message.Split('\n', 2);
+        RouterCheckStatusText.Text = lines[0];
+        RouterCheckDetailText.Text = lines.Length > 1 ? lines[1] : "";
+
         RouterCheckDot.Fill = new SolidColorBrush(status switch
         {
             RouterProxyStatus.Healthy => Colors.SeaGreen,

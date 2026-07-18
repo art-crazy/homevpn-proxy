@@ -26,7 +26,16 @@ code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 6 -x "$PROXY" "$TEST_UR
 # curl couldn't complete the request at all - connection refused/reset/
 # timeout - which is the actual failure signature seen in this incident.
 if [ "$code" = "000" ] || [ -z "$code" ]; then
-	logger -t "$LOGTAG" "proxy check failed (curl exit/code='$code'), restarting homevpn-proxy"
+	# Log the specific service-state symptoms this has actually been
+	# observed failing with (veth knocked off br-lan, its ARP entry gone
+	# stale, the sing-box process itself missing) before restarting, so
+	# there's something to look at in `logread` afterwards instead of
+	# just "it failed, then it was restarted".
+	proc_alive=$(pgrep -f 'homevpn-proxy/config.json' >/dev/null 2>&1 && echo yes || echo no)
+	netns_exists=$(ip netns list 2>/dev/null | awk '{print $1}' | grep -qx homevpn && echo yes || echo no)
+	veth_in_bridge=$(ip link show veth-hv0 2>/dev/null | grep -q 'master br-lan' && echo yes || echo no)
+	arp_state=$(ip neigh show 2>/dev/null | grep 192.168.2.250 | awk '{print $NF}')
+	logger -t "$LOGTAG" "proxy check failed (curl exit/code='$code'); process=$proc_alive netns=$netns_exists veth_in_bridge=$veth_in_bridge arp=${arp_state:-none}; restarting homevpn-proxy"
 	/etc/init.d/homevpn-proxy restart
 else
 	logger -t "$LOGTAG" -p daemon.debug "proxy check ok (http $code)"

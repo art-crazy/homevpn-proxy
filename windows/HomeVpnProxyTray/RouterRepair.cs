@@ -53,9 +53,19 @@ internal static class RouterRepair
         try
         {
             var code = RunCheck(client);
-            return IsHealthy(code)
-                ? new RouterCheckResult(RouterProxyStatus.Healthy, $"Прокси: доступен на роутере (HTTP {code}).")
-                : new RouterCheckResult(RouterProxyStatus.Unhealthy, "Прокси: НЕ отвечает на роутере.");
+            if (IsHealthy(code))
+            {
+                return new RouterCheckResult(RouterProxyStatus.Healthy, $"Прокси: доступен на роутере (HTTP {code}).");
+            }
+
+            // Only gathered on failure - these are all the specific ways
+            // this service has actually been observed silently breaking
+            // while procd still reports it as running (veth knocked off
+            // the bridge or its ARP entry going stale after a ZeroBlock
+            // reload, the sing-box process itself missing). No point
+            // paying for this on every healthy check.
+            var diagnosis = DiagnoseService(client);
+            return new RouterCheckResult(RouterProxyStatus.Unhealthy, $"Прокси: НЕ отвечает на роутере.\n{diagnosis}");
         }
         catch (Exception ex)
         {
@@ -65,6 +75,24 @@ internal static class RouterRepair
         {
             client.Disconnect();
         }
+    }
+
+    private static string DiagnoseService(SshClient client)
+    {
+        string Run(string cmd) => client.RunCommand(cmd).Result.Trim();
+
+        var procdStatus = Run("/etc/init.d/homevpn-proxy status");
+        var processAlive = Run("pgrep -f 'homevpn-proxy/config.json' >/dev/null 2>&1 && echo да || echo нет");
+        var netnsExists = Run("ip netns list 2>/dev/null | awk '{print $1}' | grep -qx homevpn && echo да || echo нет");
+        var vethInBridge = Run("ip link show veth-hv0 2>/dev/null | grep -q 'master br-lan' && echo да || echo нет");
+        var arpState = Run("ip neigh show 2>/dev/null | grep 192.168.2.250 | awk '{print $NF}'");
+
+        return "Диагностика: "
+            + $"procd={procdStatus}, "
+            + $"процесс={processAlive}, "
+            + $"netns={netnsExists}, "
+            + $"veth в br-lan={vethInBridge}, "
+            + $"ARP 192.168.2.250={(string.IsNullOrEmpty(arpState) ? "нет записи" : arpState)}";
     }
 
     private static RouterCheckResult Fix(RouterConnectionSettings settings)
