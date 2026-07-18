@@ -19,6 +19,36 @@ internal static class HealthChecker
     public static string DescribeLocalCheckCommand() =>
         $"curl -x http://{Constants.ProxyHost}:{Constants.ProxyPort} {Constants.HealthCheckTestUrl}";
 
+    // Check Point status + tunneled domains only - no live proxy probe.
+    // Both are fast, local/LAN-only lookups, so callers that don't need
+    // the proxy-reachability result (the ambient info panel, not the
+    // "Проверить" diagnostic run) shouldn't be stuck waiting on a probe
+    // that can take up to several seconds if the tunnel is unhealthy.
+    public static async Task<(bool CheckPointConnected, IReadOnlyList<string> Domains)> GetAmbientInfoAsync()
+    {
+        bool checkPointConnected;
+        try
+        {
+            checkPointConnected = CheckPointConnected();
+        }
+        catch
+        {
+            checkPointConnected = false;
+        }
+
+        IReadOnlyList<string> domains;
+        try
+        {
+            domains = await FetchTunneledDomainsAsync();
+        }
+        catch
+        {
+            domains = Array.Empty<string>();
+        }
+
+        return (checkPointConnected, domains);
+    }
+
     public static async Task<HealthSnapshot> RunAsync()
     {
         var proxyTask = ProbeProxyAsync();

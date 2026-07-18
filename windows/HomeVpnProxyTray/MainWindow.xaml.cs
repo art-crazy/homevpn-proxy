@@ -326,22 +326,22 @@ public partial class MainWindow : FluentWindow
     private async Task RefreshAmbientInfoAsync()
     {
         var enabled = ProxyToggle.IsEnabled();
-        var snapshot = enabled
-            ? await HealthChecker.RunAsync()
-            : new HealthSnapshot(false, SafeCheckPointConnected(), Array.Empty<string>(), null);
+        var (checkPointConnected, domains) = enabled
+            ? await HealthChecker.GetAmbientInfoAsync()
+            : (SafeCheckPointConnected(), Array.Empty<string>());
 
-        CheckPointStatusText.Text = snapshot.CheckPointConnected
+        CheckPointStatusText.Text = checkPointConnected
             ? "Check Point: подключён"
             : "Check Point: не подключён";
-        CheckPointStatusDot.Fill = new SolidColorBrush(snapshot.CheckPointConnected
+        CheckPointStatusDot.Fill = new SolidColorBrush(checkPointConnected
             ? Colors.SteelBlue
             : Colors.Gray);
 
         DomainsItemsControl.ItemsSource = !enabled
             ? new[] { "(прокси выключен)" }
-            : snapshot.TunneledDomains.Count == 0
+            : domains.Count == 0
                 ? new[] { "(не удалось прочитать PAC с роутера)" }
-                : snapshot.TunneledDomains.Select(d => "*." + d).ToArray();
+                : domains.Select(d => "*." + d).ToArray();
     }
 
     private static bool SafeCheckPointConnected()
