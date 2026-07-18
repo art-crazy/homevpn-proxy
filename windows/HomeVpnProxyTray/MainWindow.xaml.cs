@@ -37,6 +37,8 @@ public partial class MainWindow : FluentWindow
         AllProxyValueBox.Text = Constants.SocksProxyUrl;
         PacUrlValueBox.Text = Constants.PacUrl;
 
+        DomainsItemsControl.ItemsSource = new[] { "Загрузка..." };
+
         RefreshToggles();
         LoadRouterSettings();
         _ = RefreshAmbientInfoAsync();
